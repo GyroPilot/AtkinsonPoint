@@ -1,0 +1,18 @@
+$EXEC
+${==========================================================================}
+${ SLD-LINK.TEXT -- link LISA Slide Show.  Intrinsic units (QuickDraw,     }
+${ the WM units, AlertMgr, SysCall ...) are NOT named: the linker finds    }
+${ them through INTRINSIC.LIB.  No PRLIB: nothing prints.                  }
+${==========================================================================}
+F{ilemgr}D{elete}SLD/SLD.OBJ  Y{es}
+        Q{uit}
+${                                                                          }
+L{inker}SLD/MAIN.OBJ
+SLD/GLOBALS.OBJ
+IOSPASLIB.OBJ
+SYS1LIB.OBJ
+SYS2LIB.OBJ
+{end of the input list - this comment-only line is the blank answer}
+{no listing file - second blank answer}
+SLD/SLD.OBJ
+$ENDEXEC

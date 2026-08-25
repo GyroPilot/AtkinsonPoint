@@ -1,0 +1,571 @@
+program SldShow;
+
+{ SLD-MAIN.TEXT -- Atkinsonpoint, an Office System tool (419307).        }
+{ Shows 680 x 300 one-bit pictures made on the PC by lisapix.py with     }
+{ --window, carried over by LISA XModem Util, and named *.PIX.           }
+{                                                                        }
+{ Everything the Workshop version had to fight for comes free here: key  }
+{ presses arrive as ordinary events, and the automatic advance is a      }
+{ counter in the idle branch of the event loop rather than a calibrated  }
+{ spin.  The picture-drawing itself is the same single CopyBits.         }
+{                                                                        }
+{ The name follows Tom Stepleton's Teslerpoint -- his pun put Larry      }
+{ Tesler where PowerPoint puts Power -- but honours Bill Atkinson        }
+{ instead, since this program is essentially one call to his QuickDraw   }
+{ and its pictures are dithered by his own algorithm.  Teslerpoint was   }
+{ the inspiration; none of its code is here.  That program is bare-metal }
+{ 68000 assembly and this one is Pascal on the Office System, so the     }
+{ debt is one of example, not of source.                                 }
+
+uses (*$U UnitStd.obj *)   UnitStd,
+     (*$U UnitHz.obj *)    UnitHz,
+     (*$U Storage.obj *)   Storage,
+     (*$U QuickDraw.obj *) QuickDraw,
+     (*$U Fontmgr.obj *)   FontMgr,
+     (*$U SysCall.obj *)   SysCall,
+     (*$U wm.events.obj *) Events,
+     (*$U wm.folders.obj *) Folders,
+     (*$U wm.menus.obj *)  Menus,
+     (*$U AlertMgr.obj *)  AlertMgr,
+     (*$U WMLstd.obj *)    WMLstd,
+     (*$U WMlCrs.obj *)    WMLCrs,
+     (*$U FilerComm.obj *) FilerComm,
+     (*$U SLD/GLOBALS.OBJ *) SldGlobals;
+
+const
+   { Auto-advance, in idle passes of the event loop.  Retuned Aug 24:  }
+   { each pass yields to the scheduler, so the old 6000-pass Fast took }
+   { minutes.  These aim near 20 / 8 / 3 seconds on a 2/10; they are   }
+   { machine-relative, so retune here if a different Lisa disagrees.   }
+   { CALIBRATED from stopwatch data, Aug 24 (unaccelerated FPGA):      }
+   { 1500 ticks = 7.45s and 200 ticks = 2.65s per slide, so each tick  }
+   { is ~3.7 ms and every slide carries ~1.9s of fixed load-and-draw   }
+   { cost.  These aim at 5 / 12 / 30 seconds per slide.  If the real   }
+   { 2/10 differs, re-measure two speeds and re-solve the same way.    }
+   slowTicks = 7500;
+   medTicks  = 2700;
+   fastTicks = 800;
+
+var
+   termErr : integer;
+   ecode   : integer;
+   refnum  : integer;
+   fnm     : Pathname;
+   myVol   : Pathname;                 { the device this tool lives on  }
+                                       { (e.g. -#12-): GatherPix scans  }
+                                       { it and LoadPix opens on it     }
+   actual  : longint;
+   srcRect : Rect;
+   dstRect : Rect;
+
+{------------------------------------------------------------------------}
+{ The three required callbacks.                                          }
+{------------------------------------------------------------------------}
+
+function OutOfHeapSpace (hz : THz; bytesNeeded : integer) : integer;
+begin
+   OutOfHeapSpace := 0
+end;
+
+procedure AlertFailed;
+var err : integer;
+begin
+   if initing then begin
+      TellFiler(err, initFailed, noMemory, nil);
+      Halt
+   end
+end;
+
+procedure LastWishes (environPtr : p_env_blk; excepDataPtr : p_ex_data);
+begin
+   ImDying;
+   Halt
+end;
+
+{------------------------------------------------------------------------}
+{ Menus.                                                                 }
+{------------------------------------------------------------------------}
+
+procedure PutUpMenus;
+var m : integer;
+begin
+   ClearMenuBar;
+   for m := mFile to lastBarMenu do
+      InsertMenu(myMenus[m], 0);
+   DrawMenuBar
+end;
+
+{------------------------------------------------------------------------}
+{ Pictures.                                                              }
+{------------------------------------------------------------------------}
+
+function IsPix (var nm : E_Name) : boolean;
+{ TRUE if the name ends in .PIX, either case. }
+var n          : integer;
+    a, b, c, e : char;
+begin
+   IsPix := false;
+   n := length(nm);
+   if n >= 4 then begin
+      a := nm[n - 3];
+      b := nm[n - 2];
+      c := nm[n - 1];
+      e := nm[n];
+      if b in ['p', 'P'] then b := 'P';
+      if c in ['i', 'I'] then c := 'I';
+      if e in ['x', 'X'] then e := 'X';
+      if (a = '.') and (b = 'P') and (c = 'I') and (e = 'X') then
+         IsPix := true
+   end
+end;
+
+procedure GatherPix;
+{ Walk the catalog of the volume THE TOOL LIVES ON and keep every .PIX  }
+{ file; catalog order is show order, so name them 1.PIX, 2.PIX ... or   }
+{ zero-pad past nine.  (Was hard-coded to the boot volume; found when   }
+{ a floppy-installed copy on a second volume could see no pictures.)    }
+var path     : Pathname;
+    prefix   : E_Name;
+    entry    : E_Name;
+    schedErr : integer;
+begin
+   nPics := 0;
+   Sched_Class(schedErr, false);
+   path := myVol;                       { the tool's own volume }
+   prefix := '';
+   RESET_CATALOG(ecode, path);
+   if ecode = 0 then begin
+      GET_NEXT_ENTRY(ecode, prefix, entry);
+      while (ecode = 0) and (nPics < maxPics) do begin
+         if IsPix(entry) then begin
+            nPics := nPics + 1;
+            names[nPics] := entry
+         end;
+         GET_NEXT_ENTRY(ecode, prefix, entry)
+      end
+   end;
+   Sched_Class(schedErr, true)
+end;
+
+function LoadPix (n : integer) : boolean;
+{ Reads one picture.  Every failure path is checked: an unchecked read  }
+{ once left `actual` negative, and the tail-fill loop then wrote BEFORE }
+{ the buffer -- a bus error at offset 65534, which is -2 read as        }
+{ unsigned.  `got` is a local because `actual` is shared with other     }
+{ reads.                                                                }
+var i        : longint;
+    y        : integer;
+    got      : longint;
+    schedErr : integer;
+begin
+   LoadPix := false;
+   if (picP = nil) or (n < 1) or (n > nPics) then
+      exit(LoadPix);
+   Sched_Class(schedErr, false);
+   fnm := concat(myVol, names[n]);      { same volume as the tool }
+   OPEN(ecode, fnm, refnum, [DRead]);
+   if ecode > 0 then begin
+      Sched_Class(schedErr, true);
+      exit(LoadPix)
+   end;
+   READ_DATA(ecode, refnum, cast.ln, fileBytes, got, sequential, 0);
+   CLOSE_OBJECT(ecode, refnum);
+   Sched_Class(schedErr, true);
+
+   if ecode > 0 then
+      exit(LoadPix);                    { a real read failure }
+   if got < 0 then got := 0;            { never index backwards }
+   if got > fileBytes then got := fileBytes;
+   if got = 0 then
+      exit(LoadPix);                    { nothing came back }
+   if got < fileBytes then
+      for i := got to fileBytes - 1 do
+         picP^.a[i] := 0;               { white out a short file's tail }
+   { Re-stride the packed 85-byte file rows to the 86-byte QD rows,     }
+   { in place, back to front.  Descending y and descending i never      }
+   { read a byte that has already been overwritten (dst 86y+i is only   }
+   { clobbered by the later step i-y of the same row).  Row 0 needs no  }
+   { move; every row gets its pad byte zeroed.                          }
+   for y := picH - 1 downto 0 do begin
+      picP^.a[y * picRow + fileRow] := 0;
+      if y > 0 then
+         for i := fileRow - 1 downto 0 do
+            picP^.a[y * picRow + i] := picP^.a[y * fileRow + i]
+   end;
+   LoadPix := true
+end;
+
+procedure DrawShow;
+{ Repaint whatever should be on screen right now.                        }
+var fi : FontInfo;
+begin
+   if myWindow = nil then
+      exit(DrawShow);
+   SetPort(myWindow);
+   if haveShown then
+      CopyBits(srcBits, myWindow^.portBits, srcRect, dstRect, srcCopy, nil)
+   else begin
+      EraseRect(myWindow^.portRect);
+      GetFontInfo(fi);
+      MoveTo(10, 20 + fi.ascent);
+      DrawString('Atkinsonpoint');
+      MoveTo(10, 50 + fi.ascent);
+      DrawString('No .PIX pictures on this disk yet.');
+      MoveTo(10, 74 + fi.ascent);
+      DrawString('Make them on the PC with:');
+      MoveTo(10, 96 + fi.ascent);
+      DrawString('   python lisapix.py photo.jpg 1.PIX --window');
+      MoveTo(10, 120 + fi.ascent);
+      DrawString('then send them over with LISA XModem Util.')
+   end
+end;
+
+procedure ShowSlide (n : integer);
+var fi : FontInfo;
+begin
+   if LoadPix(n) then begin
+      cur := n;
+      haveShown := true;
+      ticks := 0;
+      DrawShow
+   end
+   else if myWindow <> nil then begin
+      { do not just sit there: name the file that would not load }
+      SetPort(myWindow);
+      EraseRect(myWindow^.portRect);
+      GetFontInfo(fi);
+      MoveTo(10, 30 + fi.ascent);
+      DrawString('Cannot read this picture:');
+      MoveTo(10, 54 + fi.ascent);
+      if (n >= 1) and (n <= nPics) then
+         DrawString(names[n]);
+      MoveTo(10, 84 + fi.ascent);
+      DrawString('It should be exactly 25,500 bytes, made with');
+      MoveTo(10, 106 + fi.ascent);
+      DrawString('   python lisapix.py photo.jpg 1.PIX --window');
+      haveShown := false;
+      autoOn := false
+   end
+end;
+
+procedure NextSlide;
+var n : integer;
+begin
+   if nPics = 0 then
+      exit(NextSlide);
+   n := cur + 1;
+   if n > nPics then n := 1;
+   ShowSlide(n)
+end;
+
+procedure PrevSlide;
+var n : integer;
+begin
+   if nPics = 0 then
+      exit(PrevSlide);
+   n := cur - 1;
+   if n < 1 then n := nPics;
+   ShowSlide(n)
+end;
+
+procedure Rescan;
+begin
+   GatherPix;
+   if nPics = 0 then begin
+      haveShown := false;
+      DrawShow;
+      NoteAlert(allAlerts, alrtNoPix)
+   end
+   else
+      ShowSlide(1)
+end;
+
+{------------------------------------------------------------------------}
+{ Launch.                                                                }
+{------------------------------------------------------------------------}
+
+procedure doUpdateEvent (normal : boolean; window : WindowPtr);
+begin
+   if normal then BeginUpdate(window);
+   DrawShow;
+   if normal then EndUpdate(window)
+end;
+
+procedure InitNewDoc (window : WindowPtr);
+begin
+   myWindow := window;
+   TakeWindow(myWindow);
+   FolderSize(myWindow, picW, picH, false);
+   SetPort(myWindow);
+   ValidRect(myWindow^.portRect);
+
+   { the source bitmap never changes: it is always our picture buffer. }
+   { Point at the padded array INSIDE the record, not the record.       }
+   cast.ln := ord4(@picP^.a);
+   srcBits.baseAddr := cast.qp;
+   srcBits.rowBytes := picRow;
+   SetRect(srcBits.bounds, 0, 0, picW, picH);
+   SetRect(srcRect, 0, 0, picW, picH);
+   dstRect := myWindow^.portRect;
+
+   Rescan;
+   doUpdateEvent(false, myWindow);
+
+   if activeFolder = myWindow then
+      PutUpMenus
+end;
+
+procedure DoFilerEvent;
+var wantsOpen : boolean;
+begin
+   HandleFilerOp(wantsOpen);
+   if wantsOpen then
+      InitNewDoc(theEvent.who)
+end;
+
+{------------------------------------------------------------------------}
+{ Commands and events.                                                   }
+{------------------------------------------------------------------------}
+
+procedure MenuCommand (menu, item : integer);
+var err : integer;
+begin
+   case menu of
+
+      mFile :
+         case item of
+            miAsideAll : DoFilingCmd(cmdClosAll);
+            miAside    : DoFilingCmd(cmdClose);
+            miPutAway  :
+               begin
+                  TellFiler(err, docClosd, docPutBack, myWindow);
+                  myWindow := nil;
+                  haveShown := false
+               end;
+         end;
+
+      mShow :
+         case item of
+            miNext   : NextSlide;
+            miPrev   : PrevSlide;
+            miAuto   :
+               begin
+                  autoOn := not autoOn;
+                  ticks := 0
+               end;
+            miRescan : Rescan;
+         end;
+
+      mSpeed :
+         begin
+            case item of
+               miSlow   : perSlide := slowTicks;
+               miMedium : perSlide := medTicks;
+               miFast   : perSlide := fastTicks;
+            end;
+            ticks := 0
+         end;
+
+      mVer :
+         case item of
+            miAbout : NoteAlert(allAlerts, alrtAbout);
+            miHowTo : NoteAlert(allAlerts, alrtHowTo);
+         end;
+
+   end
+end;
+
+procedure ProcessTheEvent;
+var theMenu, theItem : integer;
+    ch               : char;
+begin
+   case theEvent.what of
+
+      buttonDown :
+         if theEvent.who = menuFolder then begin
+            MenuSelect(theEvent.where, theMenu, theItem);
+            if (theMenu <> 0) and (theItem <> 0) then
+               MenuCommand(theMenu, theItem);
+            HiLiteMenu(0)
+         end
+         else if theEvent.who = myWindow then
+            NextSlide;            { a click in the picture advances }
+
+      buttonUp :
+         ;
+
+      keyDown :
+         if (theEvent.who = myWindow) and (not theEvent.repeatKey) then
+            if theEvent.appleKey then begin
+               MenuKey(theEvent.ascii, theMenu, theItem);
+               if theMenu <> 0 then begin
+                  HiLiteMenu(theMenu);
+                  MenuCommand(theMenu, theItem);
+                  HiLiteMenu(0)
+               end
+            end
+            else begin
+               ch := theEvent.ascii;
+               if (ch = 'B') or (ch = 'b') then
+                  PrevSlide
+               else if (ch = 'A') or (ch = 'a') then
+                  begin
+                     autoOn := not autoOn;
+                     ticks := 0
+                  end
+               else
+                  NextSlide          { space, return, anything else }
+            end;
+
+      folderActivate :
+         begin
+            TakeControl(theEvent, false, false);
+            PutUpMenus
+         end;
+
+      folderDeactivate :
+         GiveControl(theEvent);
+
+      folderUpdate :
+         if theEvent.who = myWindow then
+            doUpdateEvent(true, theEvent.who)
+         else begin
+            BeginUpdate(theEvent.who);
+            EndUpdate(theEvent.who)
+         end;
+
+      folderMoved :
+         ;
+
+      filerEvent :
+         DoFilerEvent;
+
+      abortEvent, diedEvent, diskEvent, catalogEvent, nilEvent :
+         ;
+
+      otherwise
+
+   end
+end;
+
+{------------------------------------------------------------------------}
+{ Initialize.                                                            }
+{------------------------------------------------------------------------}
+
+procedure Initialize;
+var err      : integer;
+    schedErr : integer;
+    tmp1     : string[1];
+    pcInfo   : procinfoRec;
+    excName  : t_ex_name;
+    myPrefix : TParamAlert;
+    cutAt    : integer;
+begin
+   initing := true;
+
+   excName := 'SYS_TERMINATE';
+   Declare_Excep_Hdl(err, excName, @LastWishes);
+   if err <> 0 then begin
+      TellFiler(err, initFailed, noMemory, nil);
+      halt
+   end;
+
+   toldToDie := false;
+   myWindow  := nil;
+   haveShown := false;
+   nPics     := 0;
+   cur       := 1;
+   autoOn    := true;
+   ticks     := 0;
+   perSlide  := medTicks;
+
+   InitHeap(@myZone[0], @myZone[maxHeap], @OutOfHeapSpace);
+
+   { The picture buffer.  If this cannot be had there is no point going }
+   { on: every later read would write into nothing.                     }
+   picP := nil;
+   new(picP);
+   if picP = nil then begin
+      TellFiler(err, initFailed, noMemory, nil);
+      halt
+   end;
+
+   Sched_Class(schedErr, false);
+   Info_Process(err, My_ID, pcInfo);
+   Sched_Class(schedErr, true);
+
+   cutAt := pos('}', pcInfo.progpathname);
+   if (cutAt = 0) or (cutAt > 40) then begin
+      TellFiler(err, initFailed, internalError, nil);
+      halt
+   end;
+   myPrefix := copy(pcInfo.progpathname, 1, cutAt);
+   { the device prefix alone: everything before the open-brace of the  }
+   { tool file set - so pictures live wherever the tool was installed. }
+   { chr(123) is the open brace: a literal one inside quotes risks     }
+   { being taken as a comment opener by the scanner, so it is built    }
+   { the same way SanName builds chr(92).                              }
+   tmp1 := ' ';
+   tmp1[1] := chr(123);
+   cutAt := pos(tmp1, pcInfo.progpathname);
+   if cutAt > 1 then
+      myVol := copy(pcInfo.progpathname, 1, cutAt - 1)
+   else
+      myVol := '-#12-';                { defensive fallback: boot }
+
+   InitMP(theHeap, myPrefix, @AlertFailed, alertVerNum,
+          @myMenus[mFile], allAlerts, err);
+   if err > 0 then begin
+      TellFiler(err, initFailed, noMemory, nil);
+      halt
+   end;
+
+   InitWmlCrs(err);
+   if err <> 0 then begin
+      TellFiler(err, initFailed, noDiskSpace, nil);
+      halt
+   end;
+
+   SetPort(deskPort);
+
+   initing := false
+end;
+
+{------------------------------------------------------------------------}
+{ The main program -- two-phase loop, with the automatic advance living  }
+{ in the idle branch.                                                    }
+{------------------------------------------------------------------------}
+
+begin { main program }
+
+   InitGraf(@thePort);
+   OpenWm;
+   Initialize;
+
+   repeat
+
+      while not (ImActive or toldToDie) do begin
+         GetEvent(theEvent);
+         ProcessTheEvent
+      end;
+
+      while ImActive and (not toldToDie) do begin
+         if EventAvail then begin
+            GetEvent(theEvent);
+            ProcessTheEvent
+         end
+         else begin
+            { idle: this is where the show advances by itself }
+            if autoOn and haveShown and (nPics > 1) then begin
+               ticks := ticks + 1;
+               if ticks >= perSlide then
+                  NextSlide
+            end;
+            LetOthersRun
+         end
+      end;
+
+   until toldToDie;
+
+   termErr := 0
+end.

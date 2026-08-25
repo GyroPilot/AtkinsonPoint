@@ -1,0 +1,175 @@
+unit SldGlobals;
+
+{ SLD-GLOBALS.TEXT -- shared state + the Filer handshake for             }
+{ Atkinsonpoint (tool 419307).                                           }
+{ Same skeleton as LISA XModem Util; the pane is gone because this tool  }
+{ draws pictures, not text.                                              }
+
+INTERFACE
+
+uses (*$U UnitStd.obj *)   UnitStd,
+     (*$U UnitHz.obj *)    UnitHz,
+     (*$U Storage.obj *)   Storage,
+     (*$U QuickDraw.obj *) QuickDraw,
+     (*$U Fontmgr.obj *)   FontMgr,
+     (*$U SysCall.obj *)   SysCall,
+     (*$U wm.events.obj *) Events,
+     (*$U wm.folders.obj *) Folders,
+     (*$U wm.menus.obj *)  Menus,
+     (*$U AlertMgr.obj *)  AlertMgr,
+     (*$U WMLstd.obj *)    WMLstd,
+     (*$U WMlCrs.obj *)    WMLCrs,
+     (*$U FilerComm.obj *) FilerComm;
+
+const
+   sldVersion = 'Atkinsonpoint 1.0';
+
+   { The picture size this tool expects.  Make the files with            }
+   {    python lisapix.py photo.jpg 1.PIX --window                       }
+   { which writes exactly this shape: 300 rows of 85 bytes.              }
+   picW      = 680;
+   picH      = 300;
+   { THE SECOND HALF OF THE BUS-ERROR FIX (Aug 24 2026).  QuickDraw     }
+   { requires an EVEN rowBytes; 680/8 = 85 is odd, so every odd row of  }
+   { the bitmap began at an odd address and the 68000's first word      }
+   { access there was an ADDRESS ERROR.  (At the old segment-floor      }
+   { buffer base, the row-0 under-read bus-errored first and MASKED     }
+   { this.)  The buffer now strides 86 bytes per row; the .PIX FILE     }
+   { FORMAT IS UNCHANGED at 85 x 300 = 25,500 - LoadPix re-strides on   }
+   { the way in.                                                         }
+   fileRow   = 85;            { bytes per row IN THE FILE: picW DIV 8 }
+   fileBytes = 25500;         { fileRow * picH: the .PIX file size }
+   picRow    = 86;            { bytes per row IN MEMORY: even, for QD }
+   picBytes  = 25800;         { picRow * picH: the buffer size }
+   maxPics  = 40;             { 40 x 33 bytes of names = 1,320 bytes }
+
+   { Menus.  A '-' separator COUNTS as an item position.                 }
+   mFile = 1;                 { "File/Print" }
+      miAsideAll = 1;
+      miAside    = 2;
+      { 3 is a separator }
+      miPutAway  = 4;
+
+   mShow = 2;                 { "Show" }
+      miNext   = 1;
+      miPrev   = 2;
+      { 3 is a separator }
+      miAuto   = 4;           { start / stop the automatic advance }
+      miRescan = 5;           { look for .PIX files again }
+
+   mSpeed = 3;                { "Speed" }
+      miSlow   = 1;
+      miMedium = 2;
+      miFast   = 3;
+
+   mVer = 4;                  { "Version" }
+      miAbout = 1;
+      miHowTo = 2;             {   Making Pictures ... }
+
+   lastBarMenu = 4;
+   lastMenu    = 4;
+
+   alertVerNum = 1;
+   alrtNoPix   = 10;          { "no .PIX files here" }
+   alrtAbout   = 11;          { the About box }
+   alrtHowTo   = 12;          { how to make .PIX pictures }
+
+   { THE HEAP MUST HOLD THE PICTURE.  new(picP) asks for 25,500 bytes  }
+   { and the alert cache wants about 2,000 more, so 14,000 integers =   }
+   { 28,000 bytes is the minimum that works.  A 6,000-integer heap made }
+   { new() fail silently, left picP pointing at nothing, and the first  }
+   { READ_DATA wrote into space: BUS ERROR every time.  Globals cap at  }
+   { 32K, which is why maxPics had to shrink to pay for this.           }
+   maxHeap = 14500;           { 25,808-byte padded buffer + alert cache }
+
+type
+   SlideArr = ARRAY[0..picBytes - 1] of -128..127;
+   { THE BUS-ERROR FIX (found by register probe, Aug 24 2026).  new()   }
+   { can land this buffer at the very BASE of a fresh MMU data segment. }
+   { QuickDraw's blitter reads longwords spanning the first and last    }
+   { pixels of a non-aligned transfer, reaching a couple of bytes       }
+   { BELOW baseAddr - below the segment floor, where nothing is mapped: }
+   { Level 7, data seg, offset 65534 (= -2), on the first CopyBits.     }
+   { The pads give the blitter mapped slack on both sides, wherever     }
+   { the allocator puts the block.                                       }
+   SlideBuf = record
+                 padLo : longint;
+                 a     : SlideArr;
+                 padHi : longint
+              end;
+   SlidePtr = ^SlideBuf;
+
+   { QuickDraw owns Picture / PicPtr / PicHandle, hence the names above. }
+   { Lisa Pascal has no type casts, so a variant record is how one       }
+   { address is handed to QuickDraw as a QDPtr and to READ_DATA as a     }
+   { LONGINT.                                                            }
+   PtrCast = record
+               case integer of
+                 1: (pp : SlidePtr);
+                 2: (qp : QDPtr);
+                 3: (ln : longint)
+             end;
+
+var
+   theEvent  : EventRecord;
+   myWindow  : WindowPtr;
+   toldToDie : boolean;
+   initing   : boolean;
+   myMenus   : array [1..lastMenu] of MenuInfo;
+   allAlerts : TAlertFile;
+   myZone    : array [0..maxHeap] of integer;
+
+   { the show }
+   picP      : SlidePtr;      { 25,500 bytes, on the heap: globals cap   }
+   cast      : PtrCast;       { at 32K and this alone is most of it      }
+   srcBits   : BitMap;
+   names     : array [1..maxPics] of E_Name;
+   nPics     : integer;
+   cur       : integer;
+   haveShown : boolean;       { true once a picture is on the screen }
+   autoOn    : boolean;
+   ticks     : longint;       { idle passes since the last change }
+   perSlide  : longint;       { idle passes to wait before advancing }
+
+procedure HandleFilerOp (var wantsOpen : boolean);
+
+
+IMPLEMENTATION
+
+procedure HandleFilerOp {var wantsOpen : boolean};
+var fx  : FilerExt;
+    err : integer;
+begin
+   wantsOpen := false;
+   GetAddParms(err, theEvent, fx);
+
+   case fx.theFlrOp of
+
+      fcNone :
+         wantsOpen := true;              { the user opened the tool }
+
+      fcResume :
+         TellFiler(err, docClosd, internalError, theEvent.who);
+
+      fcClose, fcSuspend, fcShred :
+         begin
+            myWindow := nil;
+            haveShown := false;
+            TellFiler(err, docClosd, allOK, theEvent.who)
+         end;
+
+      fcCopy, fcPut :
+         TellFiler(err, docNotXfered, internalError, theEvent.who);
+
+      fcDfClose :
+         TellFiler(err, dfClosed, allOK, theEvent.who);
+
+      fcTerminate :
+         toldToDie := true;
+
+      otherwise
+
+   end
+end;
+
+end.

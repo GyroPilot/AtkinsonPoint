@@ -1,0 +1,20 @@
+Atkinsonpoint 1.0 -- Lisa Pascal sources (as released)
+
+SLD-MAIN.TEXT      the program
+SLD-GLOBALS.TEXT   shared state, menu constants, picture buffer types
+SLD-ALERTS.TEXT    alerts + menus (Alert tool input; menus match the
+                   mi* constants in GLOBALS BY POSITION)
+SLD-COMP.TEXT      compile exec
+SLD-LINK.TEXT      link exec
+SLD-MAKE.TEXT      full build exec: R <SLD/MAKE from the Workshop
+
+Building: Workshop 3.0 toolchain, Lisa OS 3.1.  Each .TEXT must be
+converted to the Workshop paged format (1024-byte header page, no
+line straddling a 1024 boundary, bare CR line endings) before it
+reaches the Lisa -- see fmt_text.py in the LISACom repo.  MAIN,
+GLOBALS and ALERTS change in lockstep whenever menus change.
+
+The two hard-won 68000/QuickDraw lessons live in the GLOBALS and
+MAIN comments: bitmap rowBytes must be EVEN (memory stride 86 vs the
+85-byte file rows, re-strided in place on load), and heap picture
+buffers get padding because the blitter under-reads below baseAddr.

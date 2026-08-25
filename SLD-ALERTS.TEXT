@@ -1,0 +1,91 @@
+; ==========================================================================
+;  SLD-ALERTS.TEXT -- phrase-file source for LISA Slide Show (419307).
+;  Compiled by the Workshop 'Alert' tool into T419307PHRASE.
+;  Comments on their OWN lines; blank lines are STRUCTURAL; alert numbers
+;  ascend and 1 and 2 are REQUIRED; each section ends with a lone 0.
+; ==========================================================================
+;
+; ---- FILE HEADER ---------------------------------------------------------
+1
+4
+2000
+?
+Wait
+Stop
+Note
+Caution
+Cancel
+OK
+
+; ==== ALERTS ==============================================================
+;
+1 note alert
+LISA Slide Show could not find the message that belongs here.
+If you cannot proceed, mention the number ^N.
+
+2 stop alert
+LISA Slide Show is having trouble reaching the disk that holds the
+tool.^L^L
+Put your documents away one at a time, or press the on-off button to
+save them all.
+
+10 note alert
+There are no .PIX pictures on this disk.^L^L
+Make them on the PC with:  python lisapix.py photo.jpg 1.PIX --window^L
+then send them over with LISA XModem Util and choose Look Again.
+
+11 note alert
+Atkinsonpoint -- LISA Slide Show^L^L
+Shows 680 by 300 one-bit pictures named *.PIX, in catalog order.^L^L
+Named for Bill Atkinson, who wrote QuickDraw -- the graphics code
+drawing this very screen -- and whose dithering algorithm turns
+photographs into the black-and-white slides you are watching.^L^L
+Inspired by Teslerpoint by Tom Stepleton, which showed that a Lisa
+makes a fine slide carousel.^L^L
+Bugs and ideas: post to LisaList2.
+
+12 note alert
+Making pictures^L^L
+Pictures are made on a modern computer with lisapix.py, a Python
+script distributed alongside this program -- search LisaList2 for
+Atkinsonpoint to find both:^L^L
+   python lisapix.py photo.jpg 1.PIX --fill^L^L
+--fill crops the photo to fill the frame; --window letterboxes it
+uncropped.^L^L
+No script?  Write your own: the format is 680 by 300 pixels, one
+bit each, 85 bytes per row, high bit leftmost, 1 = black, no
+header -- exactly 25,500 bytes.^L^L
+Send pictures to this disk as BINARY files named 1.PIX, 2.PIX ...
+(zero-pad past nine) with LISACom's YMODEM receive, then choose
+Look Again for Pictures from the Show menu.
+
+0
+
+; ==== MENUS ===============================================================
+1
+File/Print
+Set Aside Everything
+Set Aside "LISA Slide Show"
+-
+Save & Put Away
+
+2
+Show
+Next Picture/N
+Previous Picture/P
+-
+Start or Stop the Show/A
+Look Again for Pictures
+
+3
+Speed
+Slow
+Medium
+Fast
+
+4
+Version
+About LISA Slide Show
+Making Pictures ...
+
+0

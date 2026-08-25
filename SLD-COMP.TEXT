@@ -1,0 +1,15 @@
+$EXEC
+${==========================================================================}
+${ SLD-COMP.TEXT -- compile LISA Slide Show, unit before program.          }
+${==========================================================================}
+F{ilemgr}D{elete}SLD/GLOBALS.OBJ  Y{es}
+        D{elete}SLD/MAIN.OBJ  Y{es}
+        Q{uit}
+${                                                                          }
+P{ascal Compile}SLD/GLOBALS.TEXT
+{no listing file - this comment-only line is the [RETURN] answer}
+SLD/GLOBALS.OBJ
+P{ascal Compile}SLD/MAIN.TEXT
+{no listing file}
+SLD/MAIN.OBJ
+$ENDEXEC

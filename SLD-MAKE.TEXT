@@ -1,0 +1,35 @@
+$EXEC
+${==========================================================================}
+${ SLD-MAKE.TEXT -- build LISA Slide Show: compile, link, install as tool  }
+${ number 419307, compile the phrase file, register with the Office        }
+${ System.                                                                 }
+${                                                                          }
+${ 419307 follows the Lisa Pascal 3.0 System Software manual section 4.3   }
+${ (machine serial plus an offset) and sits next to 419306, this author's  }
+${ XModem tool, on the LisaList2 tool-number list.                         }
+${                                                                          }
+${ THE TOOL NUMBER APPEARS ONLY IN THIS FILE.  The program recovers it     }
+${ from its own installed pathname at run time.                            }
+${==========================================================================}
+$SUBMIT SLD/COMP
+$SUBMIT SLD/LINK
+${                                                                          }
+F{ilemgr}D{elete}~{T419307~}Obj
+Y{es}D{elete}~{T419307~}PHRASE
+Y{es}C{opy}SLD/SLD.OBJ
+~{T419307~}Obj
+Q{uit}
+${                                                                          }
+R{un}Alert
+SLD/ALERTS.TEXT
+~{T419307~}
+${                                                                          }
+${ InstallTool: EXACTLY SIX answers for a tool that makes no documents.    }
+R{un}InstallTool
+Y              {1: overwrite an existing tool with the same NUMBER}
+{2: blank = the PARAPORT device -- this comment-only line is the [RETURN]}
+419307         {3: the tool number}
+N              {4: does NOT make documents}
+N              {5: no special opening rectangle}
+LISA Slide Show
+$ENDEXEC
