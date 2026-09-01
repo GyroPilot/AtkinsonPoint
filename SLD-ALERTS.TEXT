@@ -5,6 +5,25 @@
 ;  ascend and 1 and 2 are REQUIRED; each section ends with a lone 0.
 ; ==========================================================================
 ;
+; REV F -- 31-Aug-2026: About (alert 11) now states the version --
+; it never did.  BUMP THIS LINE WITH EVERY RELEASE, alongside
+; sldVersion in GLOBALS; the two must agree.
+; REV E -- 31-Aug-2026: alert 16 is a NOTE alert again -- the generator
+; rejected "16 caution alert": "Caution not followed by qualifier".
+; Remove is two-step armed instead.  LOOK UP the caution qualifier in
+; the CHM LOS source phrase files (grep caution) or Tesler's papers,
+; then restore a real caution alert here and drop the two-step.
+; REV D -- 31-Aug-2026: Remove This Picture menu line + alerts 16
+; (caution, confirm delete) and 17 (delete failed).
+; REV C -- 31-Aug-2026: no-pictures alert (10) now points at Copy
+; Pictures from Floppy first (its old advice predated the feature).
+; Making Pictures (alert 12) shortened -- it
+; overflowed the alert box on screen after the floppy-pack line was
+; added; alerts do not scroll, so the overflow was invisible.
+; REV A -- 31-Aug-2026: alerts 13/14/15 + Copy Pictures from Floppy menu
+; line added.  (No REV B: the 8-char identifier fix touched only the
+; Pascal sources.)
+;
 ; ---- FILE HEADER ---------------------------------------------------------
 1
 4
@@ -31,11 +50,11 @@ save them all.
 
 10 note alert
 There are no .PIX pictures on this disk.^L^L
-Make them on the PC with:  python lisapix.py photo.jpg 1.PIX --window^L
-then send them over with LISA XModem Util and choose Look Again.
+Insert a picture floppy and choose Copy Pictures from Floppy --^L
+or see Making Pictures in the Desk menu to create your own.
 
 11 note alert
-Atkinsonpoint -- LISA Slide Show^L^L
+Atkinsonpoint 1.1 -- LISA Slide Show^L^L
 Shows 680 by 300 one-bit pictures named *.PIX, in catalog order.^L^L
 Named for Bill Atkinson, who wrote QuickDraw -- the graphics code
 drawing this very screen -- and whose dithering algorithm turns
@@ -46,18 +65,42 @@ Bugs and ideas: post to LisaList2.
 
 12 note alert
 Making pictures^L^L
-Pictures are made on a modern computer with lisapix.py, a Python
-script distributed alongside this program -- search LisaList2 for
-Atkinsonpoint to find both:^L^L
+Made on a modern computer with lisapix.py, distributed alongside
+this program -- search LisaList2 for Atkinsonpoint:^L^L
    python lisapix.py photo.jpg 1.PIX --fill^L^L
---fill crops the photo to fill the frame; --window letterboxes it
-uncropped.^L^L
-No script?  Write your own: the format is 680 by 300 pixels, one
-bit each, 85 bytes per row, high bit leftmost, 1 = black, no
-header -- exactly 25,500 bytes.^L^L
-Send pictures to this disk as BINARY files named 1.PIX, 2.PIX ...
-(zero-pad past nine) with LISACom's YMODEM receive, then choose
-Look Again for Pictures from the Show menu.
+--fill crops to fill the frame; --window letterboxes uncropped.
+No script?  The format is 680 by 300 pixels, one bit each, 85
+bytes per row, high bit leftmost, 1 = black, no header --
+exactly 25,500 bytes.^L^L
+Send pictures over as BINARY files named 1.PIX, 2.PIX ...
+(zero-pad past nine) with LISACom's YMODEM receive, or insert a
+ready-made picture floppy and choose Copy Pictures from Floppy --
+no cable needed.  Then Look Again for Pictures shows them.
+
+13 note alert
+The pictures on the floppy have been copied to the disk this tool
+lives on.^L^L
+The show now includes them.  You can put the floppy away.
+
+14 note alert
+Nothing to copy.^L^L
+Either there is no floppy in the drive, it holds no .PIX pictures,
+or every picture on it is already on this disk.
+
+15 note alert
+Copying stopped partway.^L^L
+The disk may be full, or the floppy may be damaged.  Pictures copied
+before the trouble are fine; the one being copied was removed.
+
+16 note alert
+To remove the picture on the screen from the disk, choose
+Remove This Picture AGAIN, right now.^L^L
+Doing anything else cancels.  A removed picture cannot be
+recovered.
+
+17 note alert
+That picture could not be removed.^L^L
+The disk may be protected, or the file may be in use.
 
 0
 
@@ -76,6 +119,8 @@ Previous Picture/P
 -
 Start or Stop the Show/A
 Look Again for Pictures
+Copy Pictures from Floppy
+Remove This Picture
 
 3
 Speed

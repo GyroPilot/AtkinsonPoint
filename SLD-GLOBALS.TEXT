@@ -1,5 +1,12 @@
 unit SldGlobals;
 
+{ REV D  31-Aug-2026  Remove is two-step armed (rmArmed) -- the phrase  }
+{                      generator wants a qualifier after "caution" that  }
+{                      is not yet known; see the note beside alrtRmArm.  }
+{ REV C  31-Aug-2026  Remove This Picture: miRemove, alrtRm* added      }
+{ REV B  31-Aug-2026  identifiers made unique in 8 chars (alrtCp*)      }
+{ REV A  31-Aug-2026  floppyVol, miCopyFlop, alrtCp* constants added    }
+
 { SLD-GLOBALS.TEXT -- shared state + the Filer handshake for             }
 { Atkinsonpoint (tool 419307).                                           }
 { Same skeleton as LISA XModem Util; the pane is gone because this tool  }
@@ -22,7 +29,7 @@ uses (*$U UnitStd.obj *)   UnitStd,
      (*$U FilerComm.obj *) FilerComm;
 
 const
-   sldVersion = 'Atkinsonpoint 1.0';
+   sldVersion = 'Atkinsonpoint 1.1';
 
    { The picture size this tool expects.  Make the files with            }
    {    python lisapix.py photo.jpg 1.PIX --window                       }
@@ -43,6 +50,11 @@ const
    picBytes  = 25800;         { picRow * picH: the buffer size }
    maxPics  = 40;             { 40 x 33 bytes of names = 1,320 bytes }
 
+   floppyVol = '-LOWER-';     { the floppy drive, for Copy Pictures     }
+                              { from Floppy.  names[] is borrowed as    }
+                              { scratch during the copy so the globals  }
+                              { budget does not grow (32K cap).         }
+
    { Menus.  A '-' separator COUNTS as an item position.                 }
    mFile = 1;                 { "File/Print" }
       miAsideAll = 1;
@@ -56,6 +68,8 @@ const
       { 3 is a separator }
       miAuto   = 4;           { start / stop the automatic advance }
       miRescan = 5;           { look for .PIX files again }
+      miCopyFlop = 6;         { copy .PIX from the floppy to myVol }
+      miRemove = 7;           { delete the current picture from disk }
 
    mSpeed = 3;                { "Speed" }
       miSlow   = 1;
@@ -73,6 +87,19 @@ const
    alrtNoPix   = 10;          { "no .PIX files here" }
    alrtAbout   = 11;          { the About box }
    alrtHowTo   = 12;          { how to make .PIX pictures }
+   alrtCpDone = 13;         { floppy copy finished }
+   alrtCpNone = 14;         { nothing on the floppy to copy }
+   alrtCpFail = 15;         { copy stopped partway }
+   alrtRmArm  = 16;         { first Remove pick: arms, explains }
+                            { LOOK UP LATER: this should be a caution   }
+                            { alert (two buttons), but the generator    }
+                            { rejected "16 caution alert" -- "Caution   }
+                            { not followed by qualifier".  Real syntax  }
+                            { is in the CHM LOS source phrase files     }
+                            { (grep caution) or Tesler's phrase-file    }
+                            { papers on Applefritter.  Same lookup      }
+                            { should confirm the CautionAlert call.     }
+   alrtRmFail = 17;         { the delete failed }
 
    { THE HEAP MUST HOLD THE PICTURE.  new(picP) asks for 25,500 bytes  }
    { and the alert cache wants about 2,000 more, so 14,000 integers =   }
@@ -124,6 +151,7 @@ var
    cast      : PtrCast;       { at 32K and this alone is most of it      }
    srcBits   : BitMap;
    names     : array [1..maxPics] of E_Name;
+   rmArmed   : boolean;       { first Remove pick arms; anything else disarms }
    nPics     : integer;
    cur       : integer;
    haveShown : boolean;       { true once a picture is on the screen }

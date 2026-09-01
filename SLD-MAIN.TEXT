@@ -1,5 +1,12 @@
 program SldShow;
 
+{ REV D  31-Aug-2026  Remove is two-step armed: pick it twice in a row  }
+{                      (uses only proven NoteAlert; caution-alert        }
+{                      qualifier unknown -- see GLOBALS note)            }
+{ REV C  31-Aug-2026  Remove This Picture menu item (RemovePicture)    }
+{ REV B  31-Aug-2026  identifiers made unique in 8 chars (alrtCp*)      }
+{ REV A  31-Aug-2026  Copy Pictures from Floppy added (CopyFromFloppy)  }
+
 { SLD-MAIN.TEXT -- Atkinsonpoint, an Office System tool (419307).        }
 { Shows 680 x 300 one-bit pictures made on the PC by lisapix.py with     }
 { --window, carried over by LISA XModem Util, and named *.PIX.           }
@@ -251,6 +258,7 @@ end;
 procedure NextSlide;
 var n : integer;
 begin
+   rmArmed := false;
    if nPics = 0 then
       exit(NextSlide);
    n := cur + 1;
@@ -261,6 +269,7 @@ end;
 procedure PrevSlide;
 var n : integer;
 begin
+   rmArmed := false;
    if nPics = 0 then
       exit(PrevSlide);
    n := cur - 1;
@@ -280,9 +289,149 @@ begin
       ShowSlide(1)
 end;
 
-{------------------------------------------------------------------------}
-{ Launch.                                                                }
-{------------------------------------------------------------------------}
+
+procedure CopyFromFloppy;
+{ Copy Pictures from Floppy: every .PIX on -LOWER- that is not already  }
+{ on the tool's own volume is copied there, whole, unchanged.  A name   }
+{ that already exists is SKIPPED, never overwritten.  names[] and the   }
+{ picture buffer are borrowed as scratch; Rescan at the end rebuilds    }
+{ both from myVol, and nothing draws in between, so the borrow is safe. }
+{                                                                       }
+{ UNVERIFIED ON HARDWARE, in order of doubt: (1) whether an Office      }
+{ System tool may address -LOWER- at all; (2) the MAKE_FILE /           }
+{ WRITE_DATA / KILL_OBJECT signatures, written here parallel to the    }
+{ proven READ_DATA idiom but never compiled; (3) [DWrite] as the open   }
+{ mode.  Probe (1) first with a single OPEN before trusting the loop.   }
+var path     : Pathname;
+    prefix   : E_Name;
+    entry    : E_Name;
+    src      : Pathname;
+    dst      : Pathname;
+    nFound   : integer;
+    i        : integer;
+    nCopied  : integer;
+    nSkipped : integer;
+    failed   : boolean;
+    got      : longint;
+    wrote    : longint;
+    schedErr : integer;
+begin
+   if myVol = floppyVol then begin
+      NoteAlert(allAlerts, alrtCpNone);   { the tool IS on the floppy }
+      exit(CopyFromFloppy)
+   end;
+
+   { pass 1: list the floppy's .PIX names into names[] (borrowed) }
+   nFound := 0;
+   Sched_Class(schedErr, false);
+   path := floppyVol;
+   prefix := '';
+   RESET_CATALOG(ecode, path);
+   if ecode = 0 then begin
+      GET_NEXT_ENTRY(ecode, prefix, entry);
+      while (ecode = 0) and (nFound < maxPics) do begin
+         if IsPix(entry) then begin
+            nFound := nFound + 1;
+            names[nFound] := entry
+         end;
+         GET_NEXT_ENTRY(ecode, prefix, entry)
+      end
+   end;
+   Sched_Class(schedErr, true);
+
+   { pass 2: copy each one that is not already next to the tool }
+   nCopied  := 0;
+   nSkipped := 0;
+   failed   := false;
+   i := 1;
+   while (i <= nFound) and (not failed) do begin
+      dst := concat(myVol, names[i]);
+      src := concat(floppyVol, names[i]);
+      Sched_Class(schedErr, false);
+      OPEN(ecode, dst, refnum, [DRead]);
+      if ecode = 0 then begin
+         CLOSE_OBJECT(ecode, refnum);
+         nSkipped := nSkipped + 1
+      end
+      else begin
+         OPEN(ecode, src, refnum, [DRead]);
+         if ecode > 0 then
+            failed := true
+         else begin
+            READ_DATA(ecode, refnum, cast.ln, fileBytes, got, sequential, 0);
+            CLOSE_OBJECT(ecode, refnum);
+            if (ecode > 0) or (got <> fileBytes) then
+               failed := true          { wrong-size or unreadable: stop }
+            else begin
+               MAKE_FILE(ecode, dst, 0);
+               if ecode > 0 then
+                  failed := true
+               else begin
+                  OPEN(ecode, dst, refnum, [DWrite]);
+                  if ecode > 0 then
+                     failed := true
+                  else begin
+                     WRITE_DATA(ecode, refnum, cast.ln, fileBytes,
+                                wrote, sequential, 0);
+                     CLOSE_OBJECT(ecode, refnum);
+                     if (ecode > 0) or (wrote <> fileBytes) then begin
+                        failed := true;
+                        KILL_OBJECT(ecode, dst)
+                        { never leave a partial picture: LoadPix would }
+                        { white-fill its tail and it would look real   }
+                     end
+                     else
+                        nCopied := nCopied + 1
+                  end
+               end
+            end
+         end
+      end;
+      Sched_Class(schedErr, true);
+      i := i + 1
+   end;
+
+   Rescan;                             { rebuilds names[] and the screen }
+   if failed then
+      NoteAlert(allAlerts, alrtCpFail)
+   else if nCopied > 0 then
+      NoteAlert(allAlerts, alrtCpDone)
+   else
+      NoteAlert(allAlerts, alrtCpNone)
+end;
+
+procedure RemovePicture;
+{ Remove This Picture, two-step: the FIRST pick arms and explains; a    }
+{ SECOND CONSECUTIVE pick deletes the slide on the screen.  Any other   }
+{ action -- another menu item, a click, a key, the auto-advance --      }
+{ disarms (MenuCommand, NextSlide, PrevSlide).  Two-step because a Lisa }
+{ file has no undo and the proper caution alert needs a phrase-file     }
+{ qualifier we have not looked up yet (see GLOBALS).  Every call here   }
+{ is hardware-proven: NoteAlert, KILL_OBJECT, Rescan.                   }
+var doomed   : Pathname;
+    schedErr : integer;
+begin
+   if nPics = 0 then begin
+      NoteAlert(allAlerts, alrtNoPix);
+      rmArmed := false;
+      exit(RemovePicture)
+   end;
+   if not rmArmed then begin
+      rmArmed := true;
+      NoteAlert(allAlerts, alrtRmArm)
+   end
+   else begin
+      rmArmed := false;
+      doomed := concat(myVol, names[cur]);
+      Sched_Class(schedErr, false);
+      KILL_OBJECT(ecode, doomed);
+      Sched_Class(schedErr, true);
+      if ecode > 0 then
+         NoteAlert(allAlerts, alrtRmFail)
+      else
+         Rescan               { renumbers the show; a valid slide stays up }
+   end
+end;
 
 procedure doUpdateEvent (normal : boolean; window : WindowPtr);
 begin
@@ -330,6 +479,9 @@ end;
 procedure MenuCommand (menu, item : integer);
 var err : integer;
 begin
+   { anything except a second Remove pick disarms the pending remove }
+   if not ((menu = mShow) and (item = miRemove)) then
+      rmArmed := false;
    case menu of
 
       mFile :
@@ -354,6 +506,8 @@ begin
                   ticks := 0
                end;
             miRescan : Rescan;
+            miCopyFlop : CopyFromFloppy;
+            miRemove : RemovePicture;
          end;
 
       mSpeed :
@@ -462,6 +616,7 @@ var err      : integer;
     cutAt    : integer;
 begin
    initing := true;
+   rmArmed := false;
 
    excName := 'SYS_TERMINATE';
    Declare_Excep_Hdl(err, excName, @LastWishes);

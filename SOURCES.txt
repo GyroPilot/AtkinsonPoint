@@ -1,4 +1,18 @@
-Atkinsonpoint 1.0 -- Lisa Pascal sources (as released)
+Atkinsonpoint 1.1 -- Lisa Pascal sources (31-Aug-2026)
+
+Revision state: MAIN REV D, GLOBALS REV D, ALERTS REV F.  The 1.1
+floppies were built from ALERTS REV E; REV F differs only in the
+About-box title (it now states the version) and is the next build.
+Each .TEXT carries a REV header with a one-line change note -- when a
+build error makes no sense, compare the REV letters on the Lisa
+against these files before anything else.
+
+New in 1.1: "Copy Pictures from Floppy" (Show menu) copies every .PIX
+from the floppy drive to the volume the tool lives on, never
+overwriting an existing name; "Remove This Picture" deletes the slide
+on screen (two-step: pick it once to arm, again to delete).  Both
+verified on a Lisa 2/10, internal ProFile and external ProFile.  The
+Workshop is no longer needed to install pictures.
 
 SLD-MAIN.TEXT      the program
 SLD-GLOBALS.TEXT   shared state, menu constants, picture buffer types
@@ -14,7 +28,10 @@ line straddling a 1024 boundary, bare CR line endings) before it
 reaches the Lisa -- see fmt_text.py in the LISACom repo.  MAIN,
 GLOBALS and ALERTS change in lockstep whenever menus change.
 
-The two hard-won 68000/QuickDraw lessons live in the GLOBALS and
-MAIN comments: bitmap rowBytes must be EVEN (memory stride 86 vs the
-85-byte file rows, re-strided in place on load), and heap picture
-buffers get padding because the blitter under-reads below baseAddr.
+Three hard-won lessons live in the GLOBALS and MAIN comments:
+bitmap rowBytes must be EVEN (memory stride 86 vs the 85-byte file
+rows, re-strided in place on load); heap picture buffers get padding
+because the blitter under-reads below baseAddr; and Lisa Pascal
+identifiers are significant only to their FIRST 8 CHARACTERS -- names
+that differ later collide as "declared twice" (Error 100), so keep
+every identifier unique within 8.
